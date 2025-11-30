@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 import os
 import time
+from cv2 import data as cv2_data
 
 
 def apply_horror_effect(image: np.ndarray) -> np.ndarray:
@@ -40,7 +41,7 @@ def capture_and_save_face(asset_path: str = "assets/images/", filename: str = "u
     effect, and saves it to the specified path.
     """
     # This file is often not included in packages, so we find its path dynamically
-    cascade_path = os.path.join(cv2.data.haarcascades, 'haarcascade_frontalface_default.xml')
+    cascade_path = os.path.join(cv2_data.haarcascades, 'haarcascade_frontalface_default.xml')
     if not os.path.exists(cascade_path):
         print("Could not find face detection model.")
         return

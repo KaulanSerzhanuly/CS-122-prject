@@ -8,11 +8,12 @@ Screamer pipeline system - optimized for psychological impact.
 4. Instant return - no fade, surreal confusion
 """
 
-import pygame
+import pygame  # type: ignore
 import random
 import os
 from typing import List, Optional, Tuple
 
+from .config import Config
 
 class ScreamerPipeline:
     """
@@ -20,7 +21,7 @@ class ScreamerPipeline:
     """
     
     def __init__(self, screen: pygame.Surface, asset_root: str = "assets", 
-                 config: 'Config' = None):
+                 config: Optional[Config] = None):
         """Initialize the screamer pipeline."""
         self.screen = screen
         self.asset_root = asset_root
@@ -196,7 +197,7 @@ class ScreamerManager:
     Manages screamer triggering with random chance and cooldowns.
     """
     
-    def __init__(self, screen: pygame.Surface, config: 'Config', asset_root: str = "assets"):
+    def __init__(self, screen: pygame.Surface, config: Config, asset_root: str = "assets"):
         """Initialize screamer manager."""
         self.pipeline = ScreamerPipeline(screen, asset_root, config)
         self.config = config

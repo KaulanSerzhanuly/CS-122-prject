@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Callable, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
+from .config import Config
+
 
 class MenuState(Enum):
     """Menu states."""
@@ -110,7 +112,7 @@ class MainMenu(Menu):
 class SettingsMenu(Menu):
     """Settings menu."""
     
-    def __init__(self, config: 'Config', back_to_main: Callable, toggle_reduced_scare: Callable, 
+    def __init__(self, config: Config, back_to_main: Callable, toggle_reduced_scare: Callable, 
                  toggle_mute: Callable, change_difficulty: Callable):
         """Initialize settings menu."""
         self.config = config

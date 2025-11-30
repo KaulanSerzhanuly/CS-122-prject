@@ -62,11 +62,11 @@ class Game:
         self.telemetry = Telemetry()
         
         # Initialize game objects
-        self.snake = None
-        self.apple_manager = None
-        self.wall_manager = None
-        self.screamer_manager = None
-        self.hud = None
+        self.snake: Snake
+        self.apple_manager: AppleManager
+        self.wall_manager: WallManager
+        self.screamer_manager: ScreamerManager
+        self.hud: HUD
         
         # Game state
         self.state = GameState.MENU

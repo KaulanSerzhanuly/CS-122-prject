@@ -40,7 +40,7 @@ class FakeVirusWindow:
     """Creates a fake Windows file deletion dialog."""
     
     def __init__(self):
-        self.root = None
+        self.root: tk.Tk | None = None
         self.running = False
         self.thread = None
         self.username = os.environ.get('USERNAME', 'User')
@@ -48,6 +48,7 @@ class FakeVirusWindow:
     def _create_window(self):
         """Create the fake deletion window."""
         self.root = tk.Tk()
+        assert self.root is not None
         self.root.title("Deleting Files")
         self.root.geometry("450x180")
         self.root.resizable(False, False)
@@ -173,12 +174,15 @@ class FakeVirusWindow:
         
         # Re-enable the window after a short delay so it's not permanently disabled.
         # This happens after it has already been drawn, avoiding the focus grab.
-        self.root.after(100, lambda: self.root.wm_attributes('-disabled', False))
+        if self.root:
+            self.root.after(100, lambda: self.root and self.root.wm_attributes('-disabled', False))
     
     def _fake_cancel(self):
         """Fake cancel button - shows error message."""
+        if self.root is None:
+            return
         # Show a fake error that it can't be cancelled
-        error_win = tk.Toplevel(self.root)
+        error_win = tk.Toplevel(self.root) 
         error_win.title("Error")
         error_win.geometry("300x100")
         error_win.resizable(False, False)
@@ -222,6 +226,9 @@ class FakeVirusWindow:
             if not self.running:
                 break
                 
+            if self.root is None:
+                break
+
             # Update UI
             try:
                 # Truncate long paths
@@ -232,7 +239,7 @@ class FakeVirusWindow:
                 self.file_label.config(text=f"Deleting: {display_path}")
                 self.progress['value'] = (i / total_files) * 100
                 self.items_label.config(text=f"Items remaining: {total_files - i} ({self._random_size()} remaining)")
-                self.root.update()
+                self.root.update() 
             except:
                 break
             
@@ -240,12 +247,12 @@ class FakeVirusWindow:
             time.sleep(random.uniform(0.3, 1.5))
         
         # Finished - show completion
-        if self.running:
+        if self.running and self.root:
             try:
                 self.file_label.config(text="Deletion complete!")
                 self.progress['value'] = 100
                 self.items_label.config(text="All files have been permanently deleted.")
-                self.root.update()
+                self.root.update() 
                 time.sleep(3)
                 self._close()
             except:
@@ -276,7 +283,8 @@ class FakeVirusWindow:
             anim_thread.start()
             
             # Run tkinter main loop
-            self.root.mainloop()
+            if self.root:
+                self.root.mainloop()
         except Exception as e:
             print(f"Fake virus window error: {e}")
         finally:
@@ -285,11 +293,12 @@ class FakeVirusWindow:
     def _close(self):
         """Close the window."""
         self.running = False
-        try:
-            self.root.quit()
-            self.root.destroy()
-        except:
-            pass
+        if self.root:
+            try:
+                self.root.quit()
+                self.root.destroy()
+            except:
+                pass
     
     def stop(self):
         """Stop and close the fake virus window."""

@@ -18,10 +18,10 @@ class AssetManager:
         self.asset_root = asset_root
         self.reduced_scare = reduced_scare
         self.cache: Dict[str, Any] = {}
-        self.audio_manager: Optional[AudioManager] = None
-        self.image_manager: Optional[ImageManager] = None
-        self.video_manager: Optional[VideoManager] = None
-        
+        self.audio_manager: AudioManager
+        self.image_manager: ImageManager
+        self.video_manager: VideoManager
+
         # Initialize sub-managers
         self.audio_manager = AudioManager(self, reduced_scare)
         self.image_manager = ImageManager(self, reduced_scare)
@@ -163,7 +163,7 @@ class ImageManager:
             "overlay": (50, 50, 50, 100) if reduced_scare else (0, 0, 0, 128)
         }
     
-    def load_image(self, filename: str, size: Tuple[int, int] = None) -> pygame.Surface:
+    def load_image(self, filename: str, size: Optional[Tuple[int, int]] = None) -> pygame.Surface:
         """Load image with fallback generation."""
         if self.asset_manager.asset_exists("images", filename):
             try:
@@ -178,7 +178,7 @@ class ImageManager:
         # Generate fallback image
         return self._generate_fallback_image(filename, size)
     
-    def _generate_fallback_image(self, filename: str, size: Tuple[int, int] = None) -> pygame.Surface:
+    def _generate_fallback_image(self, filename: str, size: Optional[Tuple[int, int]] = None) -> pygame.Surface:
         """Generate fallback image for missing files."""
         if size is None:
             size = (100, 100)
@@ -293,7 +293,7 @@ class AssetFallbackGenerator:
         return surface
     
     @staticmethod
-    def generate_overlay_image(size: Tuple[int, int] = (100, 100),
+    def generate_overlay_image(size: Optional[Tuple[int, int]] = (100, 100),
                              color: Tuple[int, int, int, int] = (0, 0, 0, 128)) -> pygame.Surface:
         """Generate an overlay image."""
         surface = pygame.Surface(size, pygame.SRCALPHA)
