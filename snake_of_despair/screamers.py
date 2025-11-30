@@ -20,11 +20,11 @@ class ScreamerPipeline:
     """
     
     def __init__(self, screen: pygame.Surface, asset_root: str = "assets", 
-                 reduced_scare: bool = False):
+                 config: 'Config' = None):
         """Initialize the screamer pipeline."""
         self.screen = screen
         self.asset_root = asset_root
-        self.reduced_scare = reduced_scare
+        self.config = config
         self.screen_width, self.screen_height = screen.get_size()
         
         # Load assets
@@ -33,7 +33,7 @@ class ScreamerPipeline:
         self._load_assets()
         
         # Timing settings (in milliseconds)
-        if reduced_scare:
+        if self.config and self.config.reduced_scare:
             self.glitch_duration = (40, 60)      # Shorter glitch
             self.freeze_duration = (10, 20)      # Shorter freeze
             self.screamer_duration = (150, 200)  # Shorter screamer
@@ -43,9 +43,26 @@ class ScreamerPipeline:
             self.freeze_duration = (20, 40)      # Standard freeze
             self.screamer_duration = (200, 350)  # Standard screamer
             self.volume = 0.8
-    
+
     def _load_assets(self) -> None:
         """Load screamer images and sounds."""
+        # Check for personalized user capture first
+        images_path = os.path.join(self.asset_root, "images")
+        user_capture_file = os.path.join(images_path, "user_capture.png")
+        if os.path.exists(user_capture_file):
+            try:
+                img = pygame.image.load(user_capture_file).convert()
+                # Scale to screen size with slight zoom (1.05x for impact)
+                zoom = 1.05
+                scaled_size = (int(self.screen_width * zoom), 
+                               int(self.screen_height * zoom))
+                img = pygame.transform.scale(img, scaled_size)
+                # Add it multiple times to increase its chance of appearing
+                self.screamer_images.extend([img] * 5) 
+                print("Loaded personalized user capture for screamer.")
+            except pygame.error as e:
+                print(f"Could not load user capture {user_capture_file}: {e}")
+
         # Load images (1.webp through 8.webp)
         images_path = os.path.join(self.asset_root, "images")
         for i in range(1, 9):
@@ -80,13 +97,19 @@ class ScreamerPipeline:
         Execute the full 4-step screamer pipeline.
         This blocks the game loop momentarily for maximum impact.
         """
+        # Do nothing if reduced scare mode is on
+        if self.config and self.config.reduced_scare:
+            return
+
         if not self.screamer_images or not self.screamer_sounds:
             return
         
         # Select random image and sound
         image = random.choice(self.screamer_images)
         sound = random.choice(self.screamer_sounds)
-        sound.set_volume(self.volume)
+        # Respect mute setting
+        sound_volume = self.volume if self.config and not self.config.mute else 0.0
+        sound.set_volume(sound_volume)
         
         # Capture current screen for glitch effects
         current_screen = self.screen.copy()
@@ -173,18 +196,17 @@ class ScreamerManager:
     Manages screamer triggering with random chance and cooldowns.
     """
     
-    def __init__(self, screen: pygame.Surface, asset_root: str = "assets",
-                 reduced_scare: bool = False):
+    def __init__(self, screen: pygame.Surface, config: 'Config', asset_root: str = "assets"):
         """Initialize screamer manager."""
-        self.pipeline = ScreamerPipeline(screen, asset_root, reduced_scare)
-        self.reduced_scare = reduced_scare
+        self.pipeline = ScreamerPipeline(screen, asset_root, config)
+        self.config = config
         
         # Random trigger settings
-        # ~0.0004 = roughly once every few minutes at 60fps
-        self.random_trigger_chance = 0.0002 if not reduced_scare else 0.0001
+        # ~0.0008 = roughly once every 1-2 minutes at 60fps
+        self.random_trigger_chance = 0.0008 if not self.config.reduced_scare else 0.0003
         
         # Cooldown to prevent spam (in seconds)
-        self.cooldown_duration = 30.0 if not reduced_scare else 60.0
+        self.cooldown_duration = 30.0 if not self.config.reduced_scare else 60.0
         self.last_trigger_time = 0.0
     
     def update(self, current_time: float) -> bool:
@@ -193,6 +215,10 @@ class ScreamerManager:
         Call this every game tick.
         Returns True if screamer was triggered.
         """
+        # Do nothing if reduced scare mode is on
+        if self.config.reduced_scare:
+            return False
+
         # Check cooldown
         if current_time - self.last_trigger_time < self.cooldown_duration:
             return False

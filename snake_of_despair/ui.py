@@ -110,37 +110,30 @@ class MainMenu(Menu):
 class SettingsMenu(Menu):
     """Settings menu."""
     
-    def __init__(self, back_to_main: Callable, toggle_reduced_scare: Callable, 
+    def __init__(self, config: 'Config', back_to_main: Callable, toggle_reduced_scare: Callable, 
                  toggle_mute: Callable, change_difficulty: Callable):
         """Initialize settings menu."""
-        self.reduced_scare = False
-        self.muted = False
-        self.difficulty = "normal"
+        self.config = config
+        self.callbacks = {
+            "toggle_reduced_scare": toggle_reduced_scare,
+            "toggle_mute": toggle_mute,
+            "change_difficulty": change_difficulty
+        }
         
         items = [
-            MenuItem("Reduced Scare Mode", toggle_reduced_scare),
-            MenuItem("Mute Audio", toggle_mute),
-            MenuItem("Difficulty", change_difficulty),
+            MenuItem("", self.callbacks["toggle_reduced_scare"]),
+            MenuItem("", self.callbacks["toggle_mute"]),
+            MenuItem("", self.callbacks["change_difficulty"]),
             MenuItem("Back", back_to_main)
         ]
         super().__init__("Settings", items)
+        self.update_item_text()
     
-    def toggle_reduced_scare(self) -> None:
-        """Toggle reduced scare mode."""
-        self.reduced_scare = not self.reduced_scare
-        self.items[0].text = f"Reduced Scare Mode: {'ON' if self.reduced_scare else 'OFF'}"
-    
-    def toggle_mute(self) -> None:
-        """Toggle mute."""
-        self.muted = not self.muted
-        self.items[1].text = f"Mute Audio: {'ON' if self.muted else 'OFF'}"
-    
-    def change_difficulty(self) -> None:
-        """Cycle through difficulties."""
-        difficulties = ["easy", "normal", "hard"]
-        current_index = difficulties.index(self.difficulty)
-        self.difficulty = difficulties[(current_index + 1) % len(difficulties)]
-        self.items[2].text = f"Difficulty: {self.difficulty.upper()}"
+    def update_item_text(self) -> None:
+        """Update menu item text based on current config."""
+        self.items[0].text = f"Reduced Scare: {'ON' if self.config.reduced_scare else 'OFF'}"
+        self.items[1].text = f"Mute Audio: {'ON' if self.config.mute else 'OFF'}"
+        self.items[2].text = f"Difficulty: {self.config.difficulty.upper()}"
 
 
 class PauseMenu(Menu):
@@ -346,3 +339,20 @@ class CreditsScreen:
             
             rect = surface.get_rect(center=(screen_width // 2, start_y + i * line_height))
             screen.blit(surface, rect)
+
+
+def render_multiline_text(screen: pygame.Surface, text: str, font: pygame.font.Font,
+                          color: Tuple[int, int, int], x: int, start_y: int, align: str = 'center'):
+    """Renders text with multiple lines, centered horizontally."""
+    lines = text.split('\n')
+    line_height = font.get_linesize()
+    
+    for i, line in enumerate(lines):
+        line_surface = font.render(line, True, color)
+        if align == 'left':
+            line_rect = line_surface.get_rect(midleft=(x, start_y + i * line_height + line_height // 2))
+        elif align == 'right':
+            line_rect = line_surface.get_rect(midright=(x, start_y + i * line_height + line_height // 2))
+        else: # center
+            line_rect = line_surface.get_rect(center=(x, start_y + i * line_height))
+        screen.blit(line_surface, line_rect)
