@@ -214,47 +214,6 @@ class HUD:
         high_score_text = f"High: {high_score}"
         high_score_surface = self.font.render(high_score_text, True, colors.get("text", (255, 255, 255)))
         screen.blit(high_score_surface, (10, 40))
-        
-        # Tension meter
-        self._render_tension_meter(screen, tension, colors)
-    
-    def _render_tension_meter(self, screen: pygame.Surface, tension: float, 
-                            colors: Dict[str, Tuple[int, int, int]]) -> None:
-        """Render tension meter."""
-        meter_width = 200
-        meter_height = 20
-        meter_x = self.screen_width - meter_width - 10
-        meter_y = 10
-        
-        # Background
-        pygame.draw.rect(screen, (50, 50, 50), (meter_x, meter_y, meter_width, meter_height))
-        
-        # Tension bar
-        tension_width = int(meter_width * (tension / 100.0))
-        tension_color = self._get_tension_color(tension)
-        pygame.draw.rect(screen, tension_color, (meter_x, meter_y, tension_width, meter_height))
-        
-        # Border
-        pygame.draw.rect(screen, colors.get("text", (255, 255, 255)), 
-                        (meter_x, meter_y, meter_width, meter_height), 2)
-        
-        # Label
-        label_text = f"Tension: {tension:.1f}%"
-        label_surface = self.small_font.render(label_text, True, colors.get("text", (255, 255, 255)))
-        screen.blit(label_surface, (meter_x, meter_y - 25))
-    
-    def _get_tension_color(self, tension: float) -> Tuple[int, int, int]:
-        """Get color for tension level."""
-        if tension < 20:
-            return (0, 255, 0)  # Green
-        elif tension < 40:
-            return (255, 255, 0)  # Yellow
-        elif tension < 60:
-            return (255, 165, 0)  # Orange
-        elif tension < 80:
-            return (255, 0, 0)  # Red
-        else:
-            return (128, 0, 128)  # Purple
 
 
 class TimedChoicePrompt:

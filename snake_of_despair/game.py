@@ -8,11 +8,13 @@ import time
 from typing import Optional, Dict, Any, Callable
 from enum import Enum
 
+import random
+
 from .config import Config
 from .snake import Snake, Direction, Position
 from .apple import AppleManager
-from .tension import TensionMeter, TensionContributor
-from .screamers import ScreamerManager, PygameScreamerPlayer, ThresholdScreamerPolicy
+from .walls import WallManager
+from .screamers import ScreamerManager
 from .ui import MainMenu, SettingsMenu, PauseMenu, GameOverMenu, HUD, CreditsScreen
 from .assets import AssetManager
 from .safety import SafetyManager, SafetySettings
@@ -59,8 +61,7 @@ class Game:
         # Initialize game objects
         self.snake = None
         self.apple_manager = None
-        self.tension_meter = None
-        self.tension_contributor = None
+        self.wall_manager = None
         self.screamer_manager = None
         self.hud = None
         
@@ -111,24 +112,18 @@ class Game:
         # Create apple manager
         self.apple_manager = AppleManager(self.config.GRID_WIDTH, self.config.GRID_HEIGHT)
         
-        # Create tension system
-        self.tension_meter = TensionMeter(
-            max_tension=self.config.TENSION_MAX,
-            decay_rate=self.config.TENSION_DECAY_RATE
-        )
-        self.tension_contributor = TensionContributor(self.tension_meter)
+        # Spawn initial apple
+        self.apple_manager.spawn_apple(time.time(), self.snake.get_body_positions())
         
-        # Create screamer system
-        screamer_policy = ThresholdScreamerPolicy(
-            threshold=self.config.SCREAMER_THRESHOLD,
-            jitter=self.config.SCREAMER_JITTER
+        # Create wall manager
+        self.wall_manager = WallManager(self.config.GRID_WIDTH, self.config.GRID_HEIGHT)
+        
+        # Create screamer system (4-step pipeline with images and sounds)
+        self.screamer_manager = ScreamerManager(
+            self.screen,
+            asset_root="assets",
+            reduced_scare=self.config.reduced_scare
         )
-        effect_player = PygameScreamerPlayer(
-            self.screen, 
-            self.asset_manager.audio_manager,
-            self.config.reduced_scare
-        )
-        self.screamer_manager = ScreamerManager(effect_player, screamer_policy)
         
         # Reset score
         self.score = 0
@@ -195,16 +190,12 @@ class Game:
                 self._pause_game()
             elif event.key == pygame.K_w or event.key == pygame.K_UP:
                 self.snake.set_direction(Direction.UP)
-                self.tension_contributor.contribute_from_turn(time.time())
             elif event.key == pygame.K_s or event.key == pygame.K_DOWN:
                 self.snake.set_direction(Direction.DOWN)
-                self.tension_contributor.contribute_from_turn(time.time())
             elif event.key == pygame.K_a or event.key == pygame.K_LEFT:
                 self.snake.set_direction(Direction.LEFT)
-                self.tension_contributor.contribute_from_turn(time.time())
             elif event.key == pygame.K_d or event.key == pygame.K_RIGHT:
                 self.snake.set_direction(Direction.RIGHT)
-                self.tension_contributor.contribute_from_turn(time.time())
     
     def _handle_pause_input(self, event: pygame.event.Event) -> None:
         """Handle pause input."""
@@ -252,6 +243,9 @@ class Game:
     
     def _update_game(self, current_time: float) -> None:
         """Update game logic."""
+        # Random screamer check (runs every tick for rare random scares)
+        self.screamer_manager.update(current_time)
+        
         # Update snake
         move_interval = self.config.BASE_SPEED / self.snake.get_speed_factor()
         if self.snake.update(current_time, move_interval):
@@ -259,15 +253,7 @@ class Game:
             self._check_collisions()
             self._check_apples()
             
-            # Update tension
-            self._update_tension(current_time)
-            
-            # Update screamer system
-            tension = self.tension_meter.get_tension()
-            self.screamer_manager.update(tension, current_time)
-            
             # Update telemetry
-            self.telemetry.record_tension(tension)
             self.telemetry.record_performance(self.clock.get_fps(), self.clock.get_time())
     
     def _update_menu(self) -> None:
@@ -277,9 +263,33 @@ class Game:
     
     def _check_collisions(self) -> None:
         """Check for collisions."""
+        head = self.snake.get_head()
+        
+        # Check spawned wall collision - shrink snake, 20% screamer chance
+        if self.snake.alive and self.wall_manager.check_collision(head):
+            # Shrink the snake by one cell
+            if len(self.snake.body) > 1:
+                self.snake.body.pop()  # Remove tail segment
+                self.score = max(0, self.score - 10)  # Lose points too
+                
+                # 20% chance of screamer
+                if random.random() < 0.20:
+                    self.screamer_manager.force_trigger()
+                
+                # Log the event
+                self.telemetry.record_gameplay_event("wall_hit", {
+                    "score": self.score,
+                    "snake_length": self.snake.get_length()
+                })
+            else:
+                # Snake is only 1 cell - game over
+                self.snake.alive = False
+                self._game_over("wall_collision")
+            return
+        
+        # Check border/self collision (instant death)
         if not self.snake.alive:
             # Snake died, determine cause
-            head = self.snake.get_head()
             if (head.x < 0 or head.x >= self.config.GRID_WIDTH or 
                 head.y < 0 or head.y >= self.config.GRID_HEIGHT):
                 cause = "wall_collision"
@@ -305,26 +315,18 @@ class Game:
                 "snake_length": self.snake.get_length()
             })
             
-            # Add tension from score
-            self.tension_contributor.contribute_from_score(10)
+            # Spawn a wall for harder gameplay
+            self.wall_manager.spawn_wall(
+                self.snake.get_body_positions(),
+                self.apple_manager.get_apple_positions()
+            )
             
-            # Spawn new apple
-            self.apple_manager.spawn_apple(time.time(), self.snake.get_body_positions())
+            # Spawn new apple (avoiding walls)
+            occupied = self.snake.get_body_positions()
+            occupied.update(self.wall_manager.get_all_positions())
+            self.apple_manager.spawn_apple(time.time(), occupied)
     
-    def _update_tension(self, current_time: float) -> None:
-        """Update tension system."""
-        # Add tension contributions from snake state
-        self.tension_contributor.contribute_from_snake_state(
-            self.snake, self.apple_manager, current_time
-        )
-        
-        # Update tension meter
-        tension = self.tension_meter.update()
-        
-        # Record tension peak if high
-        if tension > 80:
-            self.telemetry.record_trigger("tension_peak", tension, "tension_peak")
-    
+
     def _render(self) -> None:
         """Render game."""
         colors = self.color_manager._colors
@@ -359,6 +361,9 @@ class Game:
         pygame.draw.rect(self.screen, (30, 30, 30), 
                         (grid_x, grid_y, grid_width, grid_height))
         
+        # Draw walls
+        self._draw_walls(grid_x, grid_y, colors)
+        
         # Draw snake
         self._draw_snake(grid_x, grid_y, colors)
         
@@ -366,8 +371,7 @@ class Game:
         self._draw_apples(grid_x, grid_y, colors)
         
         # Draw HUD
-        self.hud.render(self.screen, self.score, self.high_score, 
-                       self.tension_meter.get_tension(), colors)
+        self.hud.render(self.screen, self.score, self.high_score, 0, colors)
     
     def _draw_snake(self, grid_x: int, grid_y: int, colors: Dict[str, Any]) -> None:
         """Draw snake."""
@@ -392,6 +396,19 @@ class Game:
             pygame.draw.rect(self.screen, apple_color,
                            (x, y, self.config.GRID_SIZE, self.config.GRID_SIZE))
     
+    def _draw_walls(self, grid_x: int, grid_y: int, colors: Dict[str, Any]) -> None:
+        """Draw walls."""
+        wall_color = colors.get("wall", (100, 100, 100))
+        
+        for wall in self.wall_manager.get_walls():
+            for pos in wall.positions:
+                x = grid_x + pos.x * self.config.GRID_SIZE
+                y = grid_y + pos.y * self.config.GRID_SIZE
+                
+                pygame.draw.rect(self.screen, wall_color,
+                               (x, y, self.config.GRID_SIZE, self.config.GRID_SIZE))
+    
+
     def _render_menu(self, colors: Dict[str, Any]) -> None:
         """Render menu."""
         if self.current_menu:
