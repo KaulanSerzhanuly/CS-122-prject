@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Callable, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
+from .config import Config
+
 
 class MenuState(Enum):
     """Menu states."""
@@ -110,37 +112,30 @@ class MainMenu(Menu):
 class SettingsMenu(Menu):
     """Settings menu."""
     
-    def __init__(self, back_to_main: Callable, toggle_reduced_scare: Callable, 
+    def __init__(self, config: Config, back_to_main: Callable, toggle_reduced_scare: Callable, 
                  toggle_mute: Callable, change_difficulty: Callable):
         """Initialize settings menu."""
-        self.reduced_scare = False
-        self.muted = False
-        self.difficulty = "normal"
+        self.config = config
+        self.callbacks = {
+            "toggle_reduced_scare": toggle_reduced_scare,
+            "toggle_mute": toggle_mute,
+            "change_difficulty": change_difficulty
+        }
         
         items = [
-            MenuItem("Reduced Scare Mode", toggle_reduced_scare),
-            MenuItem("Mute Audio", toggle_mute),
-            MenuItem("Difficulty", change_difficulty),
+            MenuItem("", self.callbacks["toggle_reduced_scare"]),
+            MenuItem("", self.callbacks["toggle_mute"]),
+            MenuItem("", self.callbacks["change_difficulty"]),
             MenuItem("Back", back_to_main)
         ]
         super().__init__("Settings", items)
+        self.update_item_text()
     
-    def toggle_reduced_scare(self) -> None:
-        """Toggle reduced scare mode."""
-        self.reduced_scare = not self.reduced_scare
-        self.items[0].text = f"Reduced Scare Mode: {'ON' if self.reduced_scare else 'OFF'}"
-    
-    def toggle_mute(self) -> None:
-        """Toggle mute."""
-        self.muted = not self.muted
-        self.items[1].text = f"Mute Audio: {'ON' if self.muted else 'OFF'}"
-    
-    def change_difficulty(self) -> None:
-        """Cycle through difficulties."""
-        difficulties = ["easy", "normal", "hard"]
-        current_index = difficulties.index(self.difficulty)
-        self.difficulty = difficulties[(current_index + 1) % len(difficulties)]
-        self.items[2].text = f"Difficulty: {self.difficulty.upper()}"
+    def update_item_text(self) -> None:
+        """Update menu item text based on current config."""
+        self.items[0].text = f"Reduced Scare: {'ON' if self.config.reduced_scare else 'OFF'}"
+        self.items[1].text = f"Mute Audio: {'ON' if self.config.mute else 'OFF'}"
+        self.items[2].text = f"Difficulty: {self.config.difficulty.upper()}"
 
 
 class PauseMenu(Menu):
@@ -214,47 +209,6 @@ class HUD:
         high_score_text = f"High: {high_score}"
         high_score_surface = self.font.render(high_score_text, True, colors.get("text", (255, 255, 255)))
         screen.blit(high_score_surface, (10, 40))
-        
-        # Tension meter
-        self._render_tension_meter(screen, tension, colors)
-    
-    def _render_tension_meter(self, screen: pygame.Surface, tension: float, 
-                            colors: Dict[str, Tuple[int, int, int]]) -> None:
-        """Render tension meter."""
-        meter_width = 200
-        meter_height = 20
-        meter_x = self.screen_width - meter_width - 10
-        meter_y = 10
-        
-        # Background
-        pygame.draw.rect(screen, (50, 50, 50), (meter_x, meter_y, meter_width, meter_height))
-        
-        # Tension bar
-        tension_width = int(meter_width * (tension / 100.0))
-        tension_color = self._get_tension_color(tension)
-        pygame.draw.rect(screen, tension_color, (meter_x, meter_y, tension_width, meter_height))
-        
-        # Border
-        pygame.draw.rect(screen, colors.get("text", (255, 255, 255)), 
-                        (meter_x, meter_y, meter_width, meter_height), 2)
-        
-        # Label
-        label_text = f"Tension: {tension:.1f}%"
-        label_surface = self.small_font.render(label_text, True, colors.get("text", (255, 255, 255)))
-        screen.blit(label_surface, (meter_x, meter_y - 25))
-    
-    def _get_tension_color(self, tension: float) -> Tuple[int, int, int]:
-        """Get color for tension level."""
-        if tension < 20:
-            return (0, 255, 0)  # Green
-        elif tension < 40:
-            return (255, 255, 0)  # Yellow
-        elif tension < 60:
-            return (255, 165, 0)  # Orange
-        elif tension < 80:
-            return (255, 0, 0)  # Red
-        else:
-            return (128, 0, 128)  # Purple
 
 
 class TimedChoicePrompt:
@@ -387,3 +341,20 @@ class CreditsScreen:
             
             rect = surface.get_rect(center=(screen_width // 2, start_y + i * line_height))
             screen.blit(surface, rect)
+
+
+def render_multiline_text(screen: pygame.Surface, text: str, font: pygame.font.Font,
+                          color: Tuple[int, int, int], x: int, start_y: int, align: str = 'center'):
+    """Renders text with multiple lines, centered horizontally."""
+    lines = text.split('\n')
+    line_height = font.get_linesize()
+    
+    for i, line in enumerate(lines):
+        line_surface = font.render(line, True, color)
+        if align == 'left':
+            line_rect = line_surface.get_rect(midleft=(x, start_y + i * line_height + line_height // 2))
+        elif align == 'right':
+            line_rect = line_surface.get_rect(midright=(x, start_y + i * line_height + line_height // 2))
+        else: # center
+            line_rect = line_surface.get_rect(center=(x, start_y + i * line_height))
+        screen.blit(line_surface, line_rect)

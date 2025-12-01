@@ -24,7 +24,7 @@ class GameEvent:
 class GameLogger:
     """Logs game events to CSV file."""
     
-    def __init__(self, log_file: str = "game_log.csv", session_id: str = None):
+    def __init__(self, log_file: str = "game_log.csv", session_id: Optional[str] = None):
         """Initialize game logger."""
         self.log_file = log_file
         self.session_id = session_id or self._generate_session_id()
@@ -47,7 +47,7 @@ class GameLogger:
                     'timestamp', 'session_id', 'event_type', 'data', 'seed'
                 ])
     
-    def log_event(self, event_type: str, data: Dict[str, Any], seed: int = None) -> None:
+    def log_event(self, event_type: str, data: Dict[str, Any], seed: Optional[int] = None) -> None:
         """Log a game event."""
         event = GameEvent(
             timestamp=time.time(),
@@ -145,7 +145,7 @@ class GameLogger:
 class SeedManager:
     """Manages deterministic random seeds."""
     
-    def __init__(self, seed: int = None):
+    def __init__(self, seed: Optional[int] = None):
         """Initialize seed manager."""
         self.seed = seed
         self.original_seed = seed

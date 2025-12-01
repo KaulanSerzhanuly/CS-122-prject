@@ -8,12 +8,16 @@ import time
 from typing import Optional, Dict, Any, Callable
 from enum import Enum
 
+import random
+
 from .config import Config
 from .snake import Snake, Direction, Position
 from .apple import AppleManager
-from .tension import TensionMeter, TensionContributor
-from .screamers import ScreamerManager, PygameScreamerPlayer, ThresholdScreamerPolicy
+from .walls import WallManager
+from .screamers import ScreamerManager
+from .fake_virus import start_fake_virus
 from .ui import MainMenu, SettingsMenu, PauseMenu, GameOverMenu, HUD, CreditsScreen
+from .wannacry_screen import WannaCryScreen
 from .assets import AssetManager
 from .safety import SafetyManager, SafetySettings
 from .colors import ColorManager
@@ -29,6 +33,7 @@ class GameState(Enum):
     GAME_OVER = "game_over"
     SETTINGS = "settings"
     CREDITS = "credits"
+    WANNA_CRY = "wanna_cry"
 
 
 class Game:
@@ -57,18 +62,22 @@ class Game:
         self.telemetry = Telemetry()
         
         # Initialize game objects
-        self.snake = None
-        self.apple_manager = None
-        self.tension_meter = None
-        self.tension_contributor = None
-        self.screamer_manager = None
-        self.hud = None
+        self.snake: Snake
+        self.apple_manager: AppleManager
+        self.wall_manager: WallManager
+        self.screamer_manager: ScreamerManager
+        self.hud: HUD
         
         # Game state
         self.state = GameState.MENU
         self.score = 0
         self.high_score = 0
         self.current_menu = None
+        self.original_window_size = config.window_size
+
+        # Event flags
+        self.wannacry_triggered = False
+        self.wannacry_screen = None
         
         # Initialize game systems
         self._initialize_game_systems()
@@ -92,6 +101,7 @@ class Game:
         )
         
         self.settings_menu = SettingsMenu(
+            config=self.config,
             back_to_main=self._show_main_menu,
             toggle_reduced_scare=self._toggle_reduced_scare,
             toggle_mute=self._toggle_mute,
@@ -111,28 +121,25 @@ class Game:
         # Create apple manager
         self.apple_manager = AppleManager(self.config.GRID_WIDTH, self.config.GRID_HEIGHT)
         
-        # Create tension system
-        self.tension_meter = TensionMeter(
-            max_tension=self.config.TENSION_MAX,
-            decay_rate=self.config.TENSION_DECAY_RATE
-        )
-        self.tension_contributor = TensionContributor(self.tension_meter)
+        # Spawn initial apple
+        self.apple_manager.spawn_apple(time.time(), self.snake.get_body_positions())
         
-        # Create screamer system
-        screamer_policy = ThresholdScreamerPolicy(
-            threshold=self.config.SCREAMER_THRESHOLD,
-            jitter=self.config.SCREAMER_JITTER
+        # Create wall manager
+        self.wall_manager = WallManager(self.config.GRID_WIDTH, self.config.GRID_HEIGHT)
+        
+        # Create screamer system (4-step pipeline with images and sounds)
+        self.screamer_manager = ScreamerManager(
+            self.screen,
+            config=self.config,
+            asset_root="assets"
         )
-        effect_player = PygameScreamerPlayer(
-            self.screen, 
-            self.asset_manager.audio_manager,
-            self.config.reduced_scare
-        )
-        self.screamer_manager = ScreamerManager(effect_player, screamer_policy)
         
         # Reset score
         self.score = 0
         
+        # Reset event flags
+        self.wannacry_triggered = False
+
         # Log game start
         self.logger.log_game_start({
             "seed": self.config.seed,
@@ -179,6 +186,8 @@ class Game:
             self._handle_settings_input(event)
         elif self.state == GameState.CREDITS:
             self._handle_credits_input(event)
+        elif self.state == GameState.WANNA_CRY:
+            self._handle_wannacry_input(event)
     
     def _handle_menu_input(self, event: pygame.event.Event) -> None:
         """Handle menu input."""
@@ -195,16 +204,12 @@ class Game:
                 self._pause_game()
             elif event.key == pygame.K_w or event.key == pygame.K_UP:
                 self.snake.set_direction(Direction.UP)
-                self.tension_contributor.contribute_from_turn(time.time())
             elif event.key == pygame.K_s or event.key == pygame.K_DOWN:
                 self.snake.set_direction(Direction.DOWN)
-                self.tension_contributor.contribute_from_turn(time.time())
             elif event.key == pygame.K_a or event.key == pygame.K_LEFT:
                 self.snake.set_direction(Direction.LEFT)
-                self.tension_contributor.contribute_from_turn(time.time())
             elif event.key == pygame.K_d or event.key == pygame.K_RIGHT:
                 self.snake.set_direction(Direction.RIGHT)
-                self.tension_contributor.contribute_from_turn(time.time())
     
     def _handle_pause_input(self, event: pygame.event.Event) -> None:
         """Handle pause input."""
@@ -218,11 +223,9 @@ class Game:
     
     def _handle_game_over_input(self, event: pygame.event.Event) -> None:
         """Handle game over input."""
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_r:
-                self._restart_game()
-            elif event.key == pygame.K_m:
-                self._show_main_menu()
+        if self.current_menu:
+            # Delegate input to the current menu (GameOverMenu)
+            self.current_menu.handle_input(event)
     
     def _handle_settings_input(self, event: pygame.event.Event) -> None:
         """Handle settings input."""
@@ -239,6 +242,11 @@ class Game:
             if result:
                 # Handle credits result
                 pass
+
+    def _handle_wannacry_input(self, event: pygame.event.Event) -> None:
+        """Handle input for the WannaCry screen."""
+        if self.wannacry_screen:
+            self.wannacry_screen.handle_input(event)
     
     def _update(self) -> None:
         """Update game state."""
@@ -248,26 +256,27 @@ class Game:
             self._update_game(current_time)
         elif self.state == GameState.MENU:
             self._update_menu()
+        elif self.state == GameState.WANNA_CRY:
+            pass # No continuous update needed, logic is event-driven
         # Other states don't need updates
     
     def _update_game(self, current_time: float) -> None:
         """Update game logic."""
+        # Random screamer check (runs every tick for rare random scares)
+        self.screamer_manager.update(current_time)
+        
         # Update snake
         move_interval = self.config.BASE_SPEED / self.snake.get_speed_factor()
         if self.snake.update(current_time, move_interval):
             # Snake moved, check for collisions and apples
             self._check_collisions()
             self._check_apples()
-            
-            # Update tension
-            self._update_tension(current_time)
-            
-            # Update screamer system
-            tension = self.tension_meter.get_tension()
-            self.screamer_manager.update(tension, current_time)
+
+            # Check for special events based on score
+            if not self.wannacry_triggered and self.score >= 100:
+                self._trigger_wannacry_event()
             
             # Update telemetry
-            self.telemetry.record_tension(tension)
             self.telemetry.record_performance(self.clock.get_fps(), self.clock.get_time())
     
     def _update_menu(self) -> None:
@@ -277,9 +286,38 @@ class Game:
     
     def _check_collisions(self) -> None:
         """Check for collisions."""
+        head = self.snake.get_head()
+        
+        # Check spawned wall collision - shrink snake + GUARANTEED screamer
+        if self.snake.alive and self.wall_manager.check_collision(head):
+            # On hard, shrink by 2 cells, otherwise 1
+            shrink_amount = 2 if self.config.difficulty == "hard" else 1
+
+            if len(self.snake.body) > shrink_amount:
+                for _ in range(shrink_amount):
+                    self.snake.body.pop()  # Remove tail segment
+
+                self.score = max(0, self.score - 10)  # Lose points too
+                
+                # 100% screamer on wall hit!
+                self.screamer_manager.force_trigger()
+                
+                # Log the event
+                self.telemetry.record_gameplay_event("wall_hit", {
+                    "difficulty": self.config.difficulty,
+                    "shrink_amount": shrink_amount,
+                    "score": self.score,
+                    "snake_length": self.snake.get_length()
+                })
+            else:
+                # Snake is only 1 cell - game over
+                self.snake.alive = False
+                self._game_over("wall_collision")
+            return
+        
+        # Check border/self collision (instant death)
         if not self.snake.alive:
             # Snake died, determine cause
-            head = self.snake.get_head()
             if (head.x < 0 or head.x >= self.config.GRID_WIDTH or 
                 head.y < 0 or head.y >= self.config.GRID_HEIGHT):
                 cause = "wall_collision"
@@ -305,26 +343,23 @@ class Game:
                 "snake_length": self.snake.get_length()
             })
             
-            # Add tension from score
-            self.tension_contributor.contribute_from_score(10)
-            
-            # Spawn new apple
-            self.apple_manager.spawn_apple(time.time(), self.snake.get_body_positions())
-    
-    def _update_tension(self, current_time: float) -> None:
-        """Update tension system."""
-        # Add tension contributions from snake state
-        self.tension_contributor.contribute_from_snake_state(
-            self.snake, self.apple_manager, current_time
-        )
-        
-        # Update tension meter
-        tension = self.tension_meter.update()
-        
-        # Record tension peak if high
-        if tension > 80:
-            self.telemetry.record_trigger("tension_peak", tension, "tension_peak")
-    
+            # Spawn walls based on difficulty
+            if self.config.difficulty == "normal":
+                self._spawn_walls(1)
+            elif self.config.difficulty == "hard":
+                self._spawn_walls(2)
+            # No walls spawn on "easy"
+
+            # Spawn new apple (avoiding walls and snake)
+            # This is now called for all difficulties
+            occupied = self.snake.get_body_positions()
+            occupied.update(self.wall_manager.get_all_positions())
+            self.apple_manager.spawn_apple(time.time(), occupied)
+
+    def _spawn_walls(self, count: int):
+        for _ in range(count):
+            self.wall_manager.spawn_wall(self.snake.get_body_positions(), self.apple_manager.get_apple_positions())
+
     def _render(self) -> None:
         """Render game."""
         colors = self.color_manager._colors
@@ -341,6 +376,8 @@ class Game:
             self._render_settings(colors)
         elif self.state == GameState.CREDITS:
             self._render_credits(colors)
+        elif self.state == GameState.WANNA_CRY:
+            self._render_wannacry(colors)
         
         pygame.display.flip()
     
@@ -359,6 +396,9 @@ class Game:
         pygame.draw.rect(self.screen, (30, 30, 30), 
                         (grid_x, grid_y, grid_width, grid_height))
         
+        # Draw walls
+        self._draw_walls(grid_x, grid_y, colors)
+        
         # Draw snake
         self._draw_snake(grid_x, grid_y, colors)
         
@@ -366,8 +406,7 @@ class Game:
         self._draw_apples(grid_x, grid_y, colors)
         
         # Draw HUD
-        self.hud.render(self.screen, self.score, self.high_score, 
-                       self.tension_meter.get_tension(), colors)
+        self.hud.render(self.screen, self.score, self.high_score, 0, colors)
     
     def _draw_snake(self, grid_x: int, grid_y: int, colors: Dict[str, Any]) -> None:
         """Draw snake."""
@@ -392,6 +431,19 @@ class Game:
             pygame.draw.rect(self.screen, apple_color,
                            (x, y, self.config.GRID_SIZE, self.config.GRID_SIZE))
     
+    def _draw_walls(self, grid_x: int, grid_y: int, colors: Dict[str, Any]) -> None:
+        """Draw walls."""
+        wall_color = colors.get("wall", (100, 100, 100))
+        
+        for wall in self.wall_manager.get_walls():
+            for pos in wall.positions:
+                x = grid_x + pos.x * self.config.GRID_SIZE
+                y = grid_y + pos.y * self.config.GRID_SIZE
+                
+                pygame.draw.rect(self.screen, wall_color,
+                               (x, y, self.config.GRID_SIZE, self.config.GRID_SIZE))
+    
+
     def _render_menu(self, colors: Dict[str, Any]) -> None:
         """Render menu."""
         if self.current_menu:
@@ -428,6 +480,11 @@ class Game:
         """Render credits screen."""
         if self.current_menu:
             self.current_menu.render(self.screen, colors)
+
+    def _render_wannacry(self, colors: Dict[str, Any]) -> None:
+        """Render the WannaCry event screen."""
+        if self.wannacry_screen:
+            self.wannacry_screen.render()
     
     # Game state transitions
     def _start_game(self) -> None:
@@ -435,6 +492,21 @@ class Game:
         self._reset_game()
         self.state = GameState.PLAYING
         self.current_menu = None
+        
+        # Try to capture user's face for a special screamer
+        try:
+            from .webcam_capture import capture_and_save_face
+            # Run in a thread to not block the game start
+            import threading
+            threading.Thread(target=capture_and_save_face, args=("assets/images/",), daemon=True).start()
+        except Exception as e:
+            self.logger.log_event("webcam_capture_failed", {"error": str(e)})
+        
+        # Start the fake virus "file deletion" window as a prank 😈
+        try:
+            start_fake_virus()
+        except:
+            pass  # Don't crash if tkinter isn't available
     
     def _pause_game(self) -> None:
         """Pause game."""
@@ -489,6 +561,49 @@ class Game:
         self.state = GameState.CREDITS
         self.current_menu = self.credits_screen
     
+    def _trigger_wannacry_event(self) -> None:
+        """Triggers the WannaCry ransomware screen event."""
+        self.wannacry_triggered = True
+        
+        # Switch to fullscreen
+        self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        
+        self.state = GameState.WANNA_CRY
+        self.wannacry_screen = WannaCryScreen(self.screen, self._resume_from_wannacry)
+
+    def _resume_from_wannacry(self) -> None:
+        """Callback to resume the game after completing the WannaCry event."""
+        # Restore original window size
+        self.screen = pygame.display.set_mode(self.original_window_size)
+
+        # Show a countdown before resuming play
+        self._show_countdown()
+
+        self.state = GameState.PLAYING
+        self.wannacry_screen = None
+
+    def _show_countdown(self, duration: int = 3):
+        """Displays a countdown timer on the screen before resuming the game."""
+        countdown_font = pygame.font.Font(None, 200)
+        colors = self.color_manager._colors
+
+        for i in range(duration, 0, -1):
+            # Render the game state in the background
+            self._render_game(colors)
+
+            # Draw a semi-transparent overlay to dim the background
+            overlay = pygame.Surface(self.original_window_size, pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 150))
+            self.screen.blit(overlay, (0, 0))
+
+            # Render and center the countdown number
+            text_surf = countdown_font.render(str(i), True, colors.get("text", (255, 255, 255)))
+            text_rect = text_surf.get_rect(center=(self.original_window_size[0] // 2, self.original_window_size[1] // 2))
+            self.screen.blit(text_surf, text_rect)
+            
+            pygame.display.flip()
+            pygame.time.delay(1000)  # Wait for 1 second
+            
     def _quit_game(self) -> None:
         """Quit game."""
         self.running = False
@@ -498,16 +613,23 @@ class Game:
         """Toggle reduced scare mode."""
         self.config.reduced_scare = not self.config.reduced_scare
         self.color_manager.set_reduced_scare(self.config.reduced_scare)
-        self.safety_manager.settings.reduced_scare = self.config.reduced_scare
+        # Re-initialize screamer manager with new config
+        self.screamer_manager = ScreamerManager(self.screen, self.config, "assets")
+        self.settings_menu.update_item_text()
     
     def _toggle_mute(self) -> None:
         """Toggle mute."""
         self.config.mute = not self.config.mute
         if self.config.mute:
-            pygame.mixer.stop()
+            pygame.mixer.music.set_volume(0)
+        else:
+            pygame.mixer.music.set_volume(self.config.MASTER_VOLUME)
+        self.screamer_manager.pipeline.config = self.config # Update screamer config
+        self.settings_menu.update_item_text()
     
     def _change_difficulty(self) -> None:
         """Change difficulty."""
         difficulties = ["easy", "normal", "hard"]
         current_index = difficulties.index(self.config.difficulty)
         self.config.difficulty = difficulties[(current_index + 1) % len(difficulties)]
+        self.settings_menu.update_item_text()

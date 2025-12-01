@@ -1,301 +1,256 @@
 """
-Fear injection system with screamer effects and scheduling.
+Screamer pipeline system - optimized for psychological impact.
+
+4-Step Pipeline:
+1. Glitch (80-120ms) - visual distortion to alert the brain
+2. Freeze (20-40ms) - pause creates vulnerability  
+3. Fullscreen screamer (200-350ms) - image + sound shock
+4. Instant return - no fade, surreal confusion
 """
 
+import pygame  # type: ignore
 import random
-import time
-from typing import List, Optional, Dict, Any, Callable
-from dataclasses import dataclass
-from enum import Enum
-from abc import ABC, abstractmethod
+import os
+from typing import List, Optional, Tuple
 
+from .config import Config
 
-class ScreamerType(Enum):
-    """Types of screamer effects."""
-    IMAGE_FLASH = "image_flash"
-    IMAGE_SEQUENCE = "image_sequence"
-    VIDEO_CLIP = "video_clip"
-    AUDIO_SCREAM = "audio_scream"
-
-
-@dataclass
-class ScreamerEffect:
-    """Individual screamer effect configuration."""
-    effect_type: ScreamerType
-    duration: float
-    intensity: float  # 0.0 to 1.0
-    asset_path: Optional[str] = None
-    audio_volume: float = 0.8
-    visual_intensity: float = 0.8
-
-
-class ScreamerPolicy(ABC):
-    """Abstract base class for screamer trigger policies."""
+class ScreamerPipeline:
+    """
+    Handles the complete screamer effect with proper psychological timing.
+    """
     
-    @abstractmethod
-    def should_trigger(self, tension: float, current_time: float, 
-                      last_trigger_time: float, cooldown_duration: float) -> bool:
-        """Determine if a screamer should trigger."""
-        pass
-
-
-class ThresholdScreamerPolicy(ScreamerPolicy):
-    """Screamer policy based on tension threshold."""
-    
-    def __init__(self, threshold: float = 75.0, jitter: float = 0.5):
-        """Initialize threshold policy."""
-        self.threshold = threshold
-        self.jitter = jitter
-    
-    def should_trigger(self, tension: float, current_time: float,
-                      last_trigger_time: float, cooldown_duration: float) -> bool:
-        """Check if tension exceeds threshold and cooldown has passed."""
-        if current_time - last_trigger_time < cooldown_duration:
-            return False
-        
-        # Add jitter to threshold
-        effective_threshold = self.threshold + random.uniform(-self.jitter * 10, self.jitter * 10)
-        
-        return tension >= effective_threshold
-
-
-class StochasticScreamerPolicy(ScreamerPolicy):
-    """Screamer policy with stochastic triggering."""
-    
-    def __init__(self, base_threshold: float = 60.0, probability_scale: float = 0.1):
-        """Initialize stochastic policy."""
-        self.base_threshold = base_threshold
-        self.probability_scale = probability_scale
-    
-    def should_trigger(self, tension: float, current_time: float,
-                      last_trigger_time: float, cooldown_duration: float) -> bool:
-        """Check if screamer should trigger based on probability."""
-        if current_time - last_trigger_time < cooldown_duration:
-            return False
-        
-        if tension < self.base_threshold:
-            return False
-        
-        # Calculate probability based on tension
-        excess_tension = tension - self.base_threshold
-        probability = min(0.5, excess_tension * self.probability_scale)
-        
-        return random.random() < probability
-
-
-class ScreamerScheduler:
-    """Manages screamer scheduling and cooldowns."""
-    
-    def __init__(self, policy: ScreamerPolicy, cooldown_duration: float = 10.0,
-                 max_per_minute: int = 3):
-        """Initialize screamer scheduler."""
-        self.policy = policy
-        self.cooldown_duration = cooldown_duration
-        self.max_per_minute = max_per_minute
-        self.last_trigger_time = 0.0
-        self.trigger_times: List[float] = []
-        self.effects: List[ScreamerEffect] = []
-        self._setup_default_effects()
-    
-    def _setup_default_effects(self) -> None:
-        """Setup default screamer effects."""
-        self.effects = [
-            ScreamerEffect(
-                ScreamerType.IMAGE_FLASH,
-                duration=0.1,
-                intensity=0.8,
-                visual_intensity=0.9
-            ),
-            ScreamerEffect(
-                ScreamerType.AUDIO_SCREAM,
-                duration=0.5,
-                intensity=0.7,
-                audio_volume=0.8
-            ),
-            ScreamerEffect(
-                ScreamerType.IMAGE_SEQUENCE,
-                duration=1.0,
-                intensity=0.6,
-                visual_intensity=0.7
-            )
-        ]
-    
-    def should_trigger_screamer(self, tension: float, current_time: float) -> bool:
-        """Check if a screamer should trigger."""
-        # Clean old trigger times
-        self.trigger_times = [t for t in self.trigger_times if current_time - t < 60.0]
-        
-        # Check rate limit
-        if len(self.trigger_times) >= self.max_per_minute:
-            return False
-        
-        # Check policy
-        return self.policy.should_trigger(
-            tension, current_time, self.last_trigger_time, self.cooldown_duration
-        )
-    
-    def trigger_screamer(self, current_time: float) -> Optional[ScreamerEffect]:
-        """Trigger a screamer and return the effect."""
-        if not self.should_trigger_screamer(0.0, current_time):  # We already checked tension
-            return None
-        
-        # Select random effect
-        effect = random.choice(self.effects)
-        
-        # Update tracking
-        self.last_trigger_time = current_time
-        self.trigger_times.append(current_time)
-        
-        return effect
-    
-    def get_cooldown_remaining(self, current_time: float) -> float:
-        """Get remaining cooldown time."""
-        elapsed = current_time - self.last_trigger_time
-        return max(0.0, self.cooldown_duration - elapsed)
-
-
-class ScreamerEffectPlayer(ABC):
-    """Abstract base class for playing screamer effects."""
-    
-    @abstractmethod
-    def play_effect(self, effect: ScreamerEffect) -> None:
-        """Play a screamer effect."""
-        pass
-    
-    @abstractmethod
-    def stop_all_effects(self) -> None:
-        """Stop all currently playing effects."""
-        pass
-
-
-class PygameScreamerPlayer(ScreamerEffectPlayer):
-    """Pygame-based screamer effect player."""
-    
-    def __init__(self, screen, audio_manager, reduced_scare: bool = False):
-        """Initialize pygame screamer player."""
+    def __init__(self, screen: pygame.Surface, asset_root: str = "assets", 
+                 config: Optional[Config] = None):
+        """Initialize the screamer pipeline."""
         self.screen = screen
-        self.audio_manager = audio_manager
-        self.reduced_scare = reduced_scare
-        self.active_effects: List[ScreamerEffect] = []
-        self.effect_start_times: Dict[ScreamerEffect, float] = {}
-    
-    def play_effect(self, effect: ScreamerEffect) -> None:
-        """Play a screamer effect."""
-        if self.reduced_scare:
-            effect = self._modify_for_reduced_scare(effect)
+        self.asset_root = asset_root
+        self.config = config
+        self.screen_width, self.screen_height = screen.get_size()
         
-        self.active_effects.append(effect)
-        self.effect_start_times[effect] = time.time()
+        # Load assets
+        self.screamer_images: List[pygame.Surface] = []
+        self.screamer_sounds: List[pygame.mixer.Sound] = []
+        self._load_assets()
         
-        # Play effect based on type
-        if effect.effect_type == ScreamerType.IMAGE_FLASH:
-            self._play_image_flash(effect)
-        elif effect.effect_type == ScreamerType.AUDIO_SCREAM:
-            self._play_audio_scream(effect)
-        elif effect.effect_type == ScreamerType.IMAGE_SEQUENCE:
-            self._play_image_sequence(effect)
-        elif effect.effect_type == ScreamerType.VIDEO_CLIP:
-            self._play_video_clip(effect)
-    
-    def _modify_for_reduced_scare(self, effect: ScreamerEffect) -> ScreamerEffect:
-        """Modify effect for reduced scare mode."""
-        modified = ScreamerEffect(
-            effect_type=effect.effect_type,
-            duration=effect.duration * 2.0,  # Longer, gentler
-            intensity=effect.intensity * 0.3,  # Much lower intensity
-            asset_path=effect.asset_path,
-            audio_volume=min(0.3, effect.audio_volume * 0.5),  # Lower volume
-            visual_intensity=effect.visual_intensity * 0.4  # Much gentler visuals
-        )
-        return modified
-    
-    def _play_image_flash(self, effect: ScreamerEffect) -> None:
-        """Play image flash effect."""
-        # This would be implemented with pygame surface overlays
-        pass
-    
-    def _play_audio_scream(self, effect: ScreamerEffect) -> None:
-        """Play audio scream effect."""
-        if self.audio_manager:
-            self.audio_manager.play_sound("scream", effect.audio_volume)
-    
-    def _play_image_sequence(self, effect: ScreamerEffect) -> None:
-        """Play image sequence effect."""
-        # This would cycle through images rapidly
-        pass
-    
-    def _play_video_clip(self, effect: ScreamerEffect) -> None:
-        """Play video clip effect."""
-        # This would play a short video overlay
-        pass
-    
-    def update(self, current_time: float) -> None:
-        """Update active effects and remove expired ones."""
-        expired_effects = []
+        # Timing settings (in milliseconds)
+        if self.config and self.config.reduced_scare:
+            self.glitch_duration = (40, 60)      # Shorter glitch
+            self.freeze_duration = (10, 20)      # Shorter freeze
+            self.screamer_duration = (150, 200)  # Shorter screamer
+            self.volume = 0.3
+        else:
+            self.glitch_duration = (80, 120)     # Standard glitch
+            self.freeze_duration = (20, 40)      # Standard freeze
+            self.screamer_duration = (200, 350)  # Standard screamer
+            self.volume = 0.8
+
+    def _load_assets(self) -> None:
+        """Load screamer images and sounds."""
+        # Check for personalized user capture first
+        images_path = os.path.join(self.asset_root, "images")
+        user_capture_file = os.path.join(images_path, "user_capture.png")
+        if os.path.exists(user_capture_file):
+            try:
+                img = pygame.image.load(user_capture_file).convert()
+                # Scale to screen size with slight zoom (1.05x for impact)
+                zoom = 1.05
+                scaled_size = (int(self.screen_width * zoom), 
+                               int(self.screen_height * zoom))
+                img = pygame.transform.scale(img, scaled_size)
+                # Add it multiple times to increase its chance of appearing
+                self.screamer_images.extend([img] * 5) 
+                print("Loaded personalized user capture for screamer.")
+            except pygame.error as e:
+                print(f"Could not load user capture {user_capture_file}: {e}")
+
+        # Load images (1.webp through 8.webp)
+        images_path = os.path.join(self.asset_root, "images")
+        for i in range(1, 9):
+            img_file = os.path.join(images_path, f"{i}.webp")
+            if os.path.exists(img_file):
+                try:
+                    img = pygame.image.load(img_file).convert()
+                    # Scale to screen size with slight zoom (1.05x for impact)
+                    zoom = 1.05
+                    scaled_size = (int(self.screen_width * zoom), 
+                                   int(self.screen_height * zoom))
+                    img = pygame.transform.scale(img, scaled_size)
+                    self.screamer_images.append(img)
+                except pygame.error as e:
+                    print(f"Could not load {img_file}: {e}")
         
-        for effect in self.active_effects:
-            start_time = self.effect_start_times.get(effect, current_time)
-            elapsed = current_time - start_time
+        # Load sounds (1.ogg through 8.ogg)
+        audio_path = os.path.join(self.asset_root, "audio")
+        for i in range(1, 9):
+            snd_file = os.path.join(audio_path, f"{i}.ogg")
+            if os.path.exists(snd_file):
+                try:
+                    snd = pygame.mixer.Sound(snd_file)
+                    self.screamer_sounds.append(snd)
+                except pygame.error as e:
+                    print(f"Could not load {snd_file}: {e}")
+        
+        print(f"Loaded {len(self.screamer_images)} screamer images, {len(self.screamer_sounds)} sounds")
+    
+    def trigger(self) -> None:
+        """
+        Execute the full 4-step screamer pipeline.
+        This blocks the game loop momentarily for maximum impact.
+        """
+        # Do nothing if reduced scare mode is on
+        if self.config and self.config.reduced_scare:
+            return
+
+        if not self.screamer_images or not self.screamer_sounds:
+            return
+        
+        # Select random image and sound
+        image = random.choice(self.screamer_images)
+        sound = random.choice(self.screamer_sounds)
+        # Respect mute setting
+        sound_volume = self.volume if self.config and not self.config.mute else 0.0
+        sound.set_volume(sound_volume)
+        
+        # Capture current screen for glitch effects
+        current_screen = self.screen.copy()
+        
+        # === STEP 1: GLITCH (80-120ms) ===
+        self._do_glitch(current_screen)
+        
+        # === STEP 2: FREEZE (20-40ms) ===
+        self._do_freeze()
+        
+        # === STEP 3: FULLSCREEN SCREAMER (200-350ms) ===
+        self._do_screamer(image, sound)
+        
+        # === STEP 4: INSTANT RETURN ===
+        # Just return - the game loop will redraw normally
+    
+    def _do_glitch(self, current_screen: pygame.Surface) -> None:
+        """Step 1: Visual glitch to alert the brain."""
+        glitch_time = random.randint(*self.glitch_duration)
+        glitch_type = random.choice(["invert", "shift", "flicker", "shake"])
+        
+        if glitch_type == "invert":
+            # Invert colors
+            inverted = current_screen.copy()
+            pixels = pygame.surfarray.pixels3d(inverted)
+            pixels[:] = 255 - pixels
+            del pixels
+            self.screen.blit(inverted, (0, 0))
             
-            if elapsed >= effect.duration:
-                expired_effects.append(effect)
+        elif glitch_type == "shift":
+            # Shift screen sideways
+            shift = random.choice([-5, -3, 3, 5])
+            self.screen.fill((0, 0, 0))
+            self.screen.blit(current_screen, (shift, 0))
+            
+        elif glitch_type == "flicker":
+            # Flash between red and current
+            red_overlay = pygame.Surface(self.screen.get_size())
+            red_overlay.fill((255, 0, 0))
+            red_overlay.set_alpha(100)
+            self.screen.blit(current_screen, (0, 0))
+            self.screen.blit(red_overlay, (0, 0))
+            
+        elif glitch_type == "shake":
+            # Camera shake
+            offset_x = random.randint(-8, 8)
+            offset_y = random.randint(-8, 8)
+            self.screen.fill((0, 0, 0))
+            self.screen.blit(current_screen, (offset_x, offset_y))
         
-        # Remove expired effects
-        for effect in expired_effects:
-            self.active_effects.remove(effect)
-            if effect in self.effect_start_times:
-                del self.effect_start_times[effect]
+        pygame.display.flip()
+        pygame.time.delay(glitch_time)
     
-    def stop_all_effects(self) -> None:
-        """Stop all currently playing effects."""
-        self.active_effects.clear()
-        self.effect_start_times.clear()
-        if self.audio_manager:
-            self.audio_manager.stop_all_sounds()
+    def _do_freeze(self) -> None:
+        """Step 2: Brief freeze to create vulnerability."""
+        freeze_time = random.randint(*self.freeze_duration)
+        pygame.time.delay(freeze_time)
+    
+    def _do_screamer(self, image: pygame.Surface, sound: pygame.mixer.Sound) -> None:
+        """Step 3: The actual screamer - fullscreen image + sound."""
+        screamer_time = random.randint(*self.screamer_duration)
+        
+        # Center the slightly zoomed image (creates zoom-in effect)
+        img_width, img_height = image.get_size()
+        x = (self.screen_width - img_width) // 2
+        y = (self.screen_height - img_height) // 2
+        
+        # Show image
+        self.screen.blit(image, (x, y))
+        pygame.display.flip()
+        
+        # Micro delay before sound (30ms) - boosts shock
+        pygame.time.delay(30)
+        
+        # Play sound
+        sound.play()
+        
+        # Hold the screamer
+        pygame.time.delay(screamer_time - 30)
 
 
 class ScreamerManager:
-    """Main screamer management system."""
+    """
+    Manages screamer triggering with random chance and cooldowns.
+    """
     
-    def __init__(self, effect_player: ScreamerEffectPlayer, 
-                 policy: ScreamerPolicy = None):
+    def __init__(self, screen: pygame.Surface, config: Config, asset_root: str = "assets"):
         """Initialize screamer manager."""
-        self.effect_player = effect_player
-        self.scheduler = ScreamerScheduler(
-            policy or ThresholdScreamerPolicy(),
-            cooldown_duration=10.0,
-            max_per_minute=3
-        )
-        self.last_tension_check = 0.0
-        self.tension_check_interval = 0.1  # Check every 100ms
-    
-    def update(self, tension: float, current_time: float) -> None:
-        """Update screamer system."""
-        # Update effect player
-        self.effect_player.update(current_time)
+        self.pipeline = ScreamerPipeline(screen, asset_root, config)
+        self.config = config
         
-        # Check if we should trigger a screamer
-        if (current_time - self.last_tension_check >= self.tension_check_interval):
-            if self.scheduler.should_trigger_screamer(tension, current_time):
-                effect = self.scheduler.trigger_screamer(current_time)
-                if effect:
-                    self.effect_player.play_effect(effect)
-            
-            self.last_tension_check = current_time
-    
-    def get_cooldown_remaining(self, current_time: float) -> float:
-        """Get remaining cooldown time."""
-        return self.scheduler.get_cooldown_remaining(current_time)
-    
-    def force_trigger(self, effect_type: ScreamerType = None) -> None:
-        """Force trigger a screamer (for testing)."""
-        if effect_type:
-            effect = ScreamerEffect(effect_type, 1.0, 1.0)
-        else:
-            effect = random.choice(self.scheduler.effects)
+        # Random trigger settings
+        # ~0.0008 = roughly once every 1-2 minutes at 60fps
+        self.random_trigger_chance = 0.0008 if not self.config.reduced_scare else 0.0003
         
-        self.effect_player.play_effect(effect)
+        # Cooldown to prevent spam (in seconds)
+        self.cooldown_duration = 30.0 if not self.config.reduced_scare else 60.0
+        self.last_trigger_time = 0.0
     
-    def stop_all(self) -> None:
-        """Stop all screamer effects."""
-        self.effect_player.stop_all_effects()
+    def update(self, current_time: float) -> bool:
+        """
+        Check for random screamer trigger.
+        Call this every game tick.
+        Returns True if screamer was triggered.
+        """
+        # Do nothing if reduced scare mode is on
+        if self.config.reduced_scare:
+            return False
+
+        # Check cooldown
+        if current_time - self.last_trigger_time < self.cooldown_duration:
+            return False
+        
+        # Random trigger check
+        if random.random() < self.random_trigger_chance:
+            self.force_trigger()
+            self.last_trigger_time = current_time
+            return True
+        
+        return False
+    
+    def force_trigger(self) -> None:
+        """Force trigger a screamer immediately (for danger zones)."""
+        self.pipeline.trigger()
+    
+    def trigger_from_danger_zone(self, current_time: float) -> None:
+        """Trigger screamer from danger zone - always triggers, updates cooldown."""
+        self.pipeline.trigger()
+        self.last_trigger_time = current_time
+
+
+# Legacy compatibility classes (kept for any old code that might reference them)
+class ScreamerType:
+    IMAGE_FLASH = "image_flash"
+    AUDIO_SCREAM = "audio_scream"
+
+class ThresholdScreamerPolicy:
+    def __init__(self, threshold: float = 0, jitter: float = 0):
+        pass
+
+class PygameScreamerPlayer:
+    def __init__(self, screen, audio_manager, reduced_scare: bool = False):
+        pass

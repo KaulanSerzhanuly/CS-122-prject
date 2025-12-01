@@ -73,6 +73,8 @@ def parse_window_size(window_str: str) -> tuple[int, int]:
 
 def main() -> None:
     """Main entry point."""
+    args = None
+
     try:
         args = parse_args()
         
@@ -96,12 +98,14 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nGame interrupted by user.")
         sys.exit(0)
+
     except Exception as e:
         print(f"Error starting game: {e}")
-        if args.debug:
+        if args and args.debug:  # <-- safe check
             import traceback
             traceback.print_exc()
         sys.exit(1)
+
 
 
 if __name__ == "__main__":
