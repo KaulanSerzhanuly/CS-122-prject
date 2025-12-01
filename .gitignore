@@ -169,16 +169,6 @@ debug.log
 *.save
 *.sav
 
-# Asset files (placeholders are generated)
-assets/audio/*.wav
-assets/audio/*.ogg
-assets/audio/*.mp3
-assets/images/*.png
-assets/images/*.jpg
-assets/images/*.jpeg
-assets/video/*.mp4
-assets/video/*.avi
-
 # OS-specific files
 .DS_Store
 .DS_Store?
